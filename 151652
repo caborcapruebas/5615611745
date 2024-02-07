@@ -1,0 +1,585 @@
+# 2024-02-07 16:13:01 by RouterOS 7.14beta8
+# software id = VBJY-G2UJ
+#
+# model = RB3011UiAS
+# serial number = 8EEB0892C572
+/interface ethernet
+set [ find default-name=ether10 ] name=LAN10
+set [ find default-name=ether1 ] comment=Satrlink name=WAN1
+set [ find default-name=ether2 ] comment=Local name=WAN2
+/interface wireguard
+add comment=back-to-home-vpn listen-port=51983 mtu=1420 name=back-to-home-vpn
+/interface list
+add name=LAN
+add name=WAN
+add name=VPN
+/interface wireless security-profiles
+set [ find default=yes ] supplicant-identity=MikroTik
+/ip smb smb-user
+set [ find default=yes ] read-only=yes
+/port
+set 0 name=serial0
+/routing table
+add fib name=to_ISP1
+add fib name=to_ISP2
+add name=via-wan-x
+add fib name=cloud-ip
+add fib name=no-pcc
+add fib name=no-pcc-vpn
+/user group
+add name=wisphub policy="local,ftp,reboot,read,write,policy,test,password,snif\
+    f,sensitive,api,romon,!telnet,!ssh,!winbox,!web,!rest-api"
+add name=read-api policy="read,api,!local,!telnet,!ssh,!ftp,!reboot,!write,!po\
+    licy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon,!rest-api"
+/ip firewall connection tracking
+set udp-timeout=10s
+/interface list member
+add interface=LAN10 list=LAN
+add interface=WAN1 list=WAN
+add interface=WAN2 list=WAN
+/interface wireguard peers
+add allowed-address=192.168.216.3/32 comment=\
+    "MikroTik 244 - StarLink Alvaro Obregon (iPhone 12 Pro Max)" interface=\
+    back-to-home-vpn public-key=\
+    "c5X8MPkcwp/+UmWw/ezmyjoCfl6pmD+4PfWjmLJOmF0="
+/ip address
+add address=192.168.1.244/16 interface=LAN10 network=192.168.0.0
+/ip cloud
+set back-to-home-vpn=enabled ddns-enabled=yes
+/ip cloud back-to-home-users
+add allow-lan=yes comment=" Blackview Active 8 Pro" name=\
+    "MikroTik 244 - StarLink Alvaro Obregon" private-key=\
+    "CGbXDf79hoccMefSgEc0ZJIkCF7U+ae5042xHlQGH3I=" public-key=\
+    "Swedo5OcNYPvQDYn2Ilf0v8X+6PCAzkLtV8O8AeDmgo="
+/ip dhcp-client
+add interface=WAN1 script="\r\
+    \n:local gateway [/ip/dhcp-client get [find interface=\"WAN1\"] gateway];\
+    \r\
+    \n/ip/route \r\
+    \nset [ find routing-table=\"to_ISP1\" ] gateway=\"\$gateway%WAN1\"; \r\
+    \nset [ find comment=\"fo_isp1gtw\" ] gateway=\"\$gateway\"; \r\
+    \n/ip/firewall/mangle \r\
+    \nset [ find comment=\"fo_ip_gw1\" ] dst-address=\$gateway;"
+add add-default-route=no interface=WAN2 script="\r\
+    \n:local gateway [/ip/dhcp-client get [find interface=\"WAN2\"] gateway];\
+    \r\
+    \n/ip/route \r\
+    \nset [ find routing-table=\"to_ISP2\" ] gateway=\"\$gateway%WAN2\"; \r\
+    \nset [ find comment=\"fo_isp2gtw\" ] gateway=\"\$gateway\"; \r\
+    \n/ip/firewall/mangle \r\
+    \nset [ find comment=\"fo_ip_gw2\" ] dst-address=\$gateway;"
+/ip dns
+set allow-remote-requests=yes servers=8.8.4.4
+/ip firewall filter
+add action=drop chain=input comment="Bloqueo webproxy externo" disabled=yes \
+    dst-port=8080 in-interface-list=WAN protocol=tcp
+add action=drop chain=input comment="Bloqueo DNS cache externo" disabled=yes \
+    dst-port=53 in-interface-list=WAN protocol=udp
+add action=drop chain=input comment=\
+    "Evita ping al router bloquea los packetes 128-65535" disabled=yes \
+    in-interface-list=WAN packet-size=128-65535 protocol=icmp
+add action=drop chain=input comment="Bloquear Ataques FTP" disabled=yes \
+    dst-port=21 protocol=tcp src-address-list=ftp_blacklist
+add action=accept chain=output content=\
+    "530 Login incorrect dst-limit=1/1m,9,dst-address/1m" disabled=yes \
+    protocol=tcp
+add action=add-dst-to-address-list address-list="" address-list-timeout=\
+    none-dynamic chain=output content=\
+    "530 Login incorrect address-list=ftp_blacklist address-list-timeout=3h" \
+    disabled=yes protocol=tcp
+add action=drop chain=input comment="Proteccion VSC contra ataques via SSH" \
+    disabled=yes dst-port=22 protocol=tcp src-address-list=ssh_blacklist
+add action=add-src-to-address-list address-list=ssh_blacklist \
+    address-list-timeout=1w3d chain=input connection-state=new disabled=yes \
+    dst-port=22 protocol=tcp src-address-list=ssh_stage3
+add action=add-src-to-address-list address-list=ssh_stage3 \
+    address-list-timeout=1m chain=input connection-state=new disabled=yes \
+    dst-port=22 protocol=tcp src-address-list=ssh_stage2
+add action=add-src-to-address-list address-list=ssh_stage2 \
+    address-list-timeout=1m chain=input connection-state=new disabled=yes \
+    dst-port=22 protocol=tcp src-address-list=ssh_stage1
+add action=add-src-to-address-list address-list=ssh_stage1 \
+    address-list-timeout=1m chain=input connection-state=new disabled=yes \
+    dst-port=22 protocol=tcp
+add action=drop chain=forward comment="Filtra paquetes invalidos" \
+    connection-state=invalid disabled=yes
+add action=accept chain=forward comment="Acepta conecciones relacionadas" \
+    connection-state=related disabled=yes
+add action=accept chain=forward comment="Acepta conecciones Establecidas" \
+    connection-state=established disabled=yes
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="Port scanners to list" \
+    disabled=yes protocol=tcp psd=21,3s,3,1
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="NMAP FIN Stealth scan" \
+    disabled=yes protocol=tcp tcp-flags=fin,!syn,!rst,!psh,!ack,!urg
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="SYN/FIN scan" disabled=yes \
+    protocol=tcp tcp-flags=fin,syn
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="SYN/RST scan" disabled=yes \
+    protocol=tcp tcp-flags=syn,rst
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="FIN/PSH/URG scan" disabled=\
+    yes protocol=tcp tcp-flags=fin,psh,urg,!syn,!rst,!ack
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="ALL/ALL scan" disabled=yes \
+    protocol=tcp tcp-flags=fin,syn,rst,psh,ack,urg
+add action=add-src-to-address-list address-list="port scanners" \
+    address-list-timeout=2w chain=input comment="NMAP NULL scan" disabled=yes \
+    protocol=tcp tcp-flags=!fin,!syn,!rst,!psh,!ack,!urg
+add action=drop chain=input comment="Dropeo de scaneadores de puertos" \
+    disabled=yes src-address-list="port scanners"
+/ip firewall mangle
+add action=accept chain=prerouting comment=back-to-home-vpn in-interface=\
+    back-to-home-vpn src-address=192.168.216.0/24
+add action=accept chain=prerouting dst-address=192.168.216.0/24 in-interface=\
+    back-to-home-vpn
+add action=mark-connection chain=prerouting dst-address=192.168.0.0/16 \
+    in-interface-list=LAN new-connection-mark=local_conn passthrough=yes
+add action=accept chain=prerouting comment=fo_ip_gw1 dst-address=172.16.0.1 \
+    in-interface-list=LAN
+add action=accept chain=prerouting comment=fo_ip_gw2 dst-address=172.168.2.1 \
+    in-interface-list=LAN
+add action=mark-connection chain=prerouting connection-mark=no-mark \
+    in-interface=WAN1 new-connection-mark=ISP1_conn passthrough=yes
+add action=mark-connection chain=prerouting connection-mark=no-mark \
+    in-interface=WAN2 new-connection-mark=ISP2_conn passthrough=yes
+add action=mark-connection chain=prerouting connection-mark=no-mark \
+    dst-address-type=!local in-interface-list=LAN new-connection-mark=\
+    ISP1_conn passthrough=yes per-connection-classifier=both-addresses:2/0
+add action=mark-connection chain=prerouting connection-mark=no-mark \
+    dst-address-type=!local in-interface-list=LAN new-connection-mark=\
+    ISP2_conn passthrough=yes per-connection-classifier=both-addresses:2/1
+add action=log chain=prerouting comment=fo_bandera_pcc disabled=yes
+add action=mark-routing chain=prerouting connection-mark=ISP1_conn \
+    in-interface-list=LAN new-routing-mark=to_ISP1 passthrough=no
+add action=mark-routing chain=prerouting connection-mark=ISP2_conn \
+    in-interface-list=LAN new-routing-mark=to_ISP2 passthrough=no
+add action=mark-routing chain=output connection-mark=ISP1_conn \
+    new-routing-mark=to_ISP1 passthrough=no
+add action=mark-routing chain=output connection-mark=ISP2_conn \
+    new-routing-mark=to_ISP2 passthrough=no
+/ip firewall nat
+add action=masquerade chain=srcnat comment=\
+    "NAT para los paquetes que salgan por las interfaces WAN" \
+    out-interface-list=WAN src-address=192.168.0.0/16
+/ip firewall service-port
+set ftp disabled=yes
+set tftp disabled=yes
+set h323 disabled=yes
+set sip disabled=yes
+set pptp disabled=yes
+/ip route
+add distance=1 gateway=172.16.0.1%WAN1 routing-table=to_ISP1
+add check-gateway=ping comment=fo_isp1mon distance=1 dst-address=0.0.0.0/0 \
+    gateway=1.1.1.1 pref-src=0.0.0.0 routing-table=main scope=30 \
+    suppress-hw-offload=no target-scope=11
+add comment=fo_isp1gtw distance=1 dst-address=1.1.1.1 gateway=172.16.0.1 \
+    routing-table=main scope=10 suppress-hw-offload=no target-scope=10
+add disabled=no distance=1 dst-address=0.0.0.0/0 gateway=WAN2 pref-src="" \
+    routing-table=to_ISP2 scope=30 suppress-hw-offload=no target-scope=10
+add check-gateway=ping comment=fo_isp2mon distance=1 dst-address=0.0.0.0/0 \
+    gateway=1.0.0.1 pref-src=0.0.0.0 routing-table=main scope=30 \
+    suppress-hw-offload=no target-scope=11
+add comment=fo_isp2gtw disabled=yes distance=1 dst-address=1.0.0.1/32 \
+    gateway="" pref-src="" routing-table=main scope=10 suppress-hw-offload=no \
+    target-scope=10
+/system clock
+set time-zone-name=America/Hermosillo
+/system identity
+set name="MikroTik 244 - StarLink Alvaro Obregon"
+/system note
+set note="\
+    \n\
+    \n\
+    \n\
+    \n\
+    \n    LL       IIIIIII  VV     VV   AAAAAAA  UU   UU  RRRRRRR     \
+    \n    LL         III    VV     VV   AA   AA  UU   UU  RR   RR     \
+    \n    LL         III     VV   VV    AA   AA  UU   UU  RRRRRRR     \
+    \n    LL         III     VV   VV    AAAAAAA  UU   UU  RR  RR      \
+    \n    LL         III      VV VV     AA   AA  UU   UU  RR   RR     \
+    \n    LLLLLLL  IIIIIII     VVV      AA   AA  UUUUUUU  RR    RR    \
+    \n\
+    \n\
+    \n                        https://livaur.com                      \
+    \n\
+    \n_______________________________________________________________ \
+    \n\
+    \n               CONFIGURACIONES EQUIPOS MIKROTIK                 \
+    \n_______________________________________________________________ \
+    \n\
+    \n    Para soporte Escribenos a @livaur por Facebook Messenger    \
+    \n\
+    \n" show-at-login=no
+/system package update
+set channel=testing
+/system scheduler
+add disabled=yes interval=10s name=foSchedule1 on-event=lanzadorFailover \
+    policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon \
+    start-date=1970-01-01 start-time=00:00:00
+/system script
+add dont-require-permissions=no name=failoverConfig owner=admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    \_Correo electr\F3nico del administrador al que llegaran las notificacione\
+    s de ISPs caidos\r\
+    \n:global foCorreoAdministrador \"lizarraga.lazaro@gmail.com\";\r\
+    \n\r\
+    \n# Bandera que indica si se van a enviar correos de notificacion \"si\"/\
+    \"no\"\r\
+    \n:global foEnvioEmailsNotificacion \"si\";\r\
+    \n\r\
+    \n# Definici\F3n de ISPs y capacidades proporcionales\r\
+    \n:global foIsps {{1;1};{2;1} };\r\
+    \n\r\
+    \n# Relacion de ISPs con Interfaces\r\
+    \n:global foRelIspInterfaz {{1;\"WAN1\"};{2;\"WAN2\"};};\r\
+    \n\r\
+    \n\r"
+add dont-require-permissions=no name=failover owner=admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    ##########################################\r\
+    \n# Script Failover para router con N ISPs\r\
+    \n###########################################\r\
+    \n\r\
+    \n# Carga de la configuracion\r\
+    \n/system/script/run failoverConfig;\r\
+    \n\r\
+    \n\r\
+    \n# Declaraci\F3n de variables principales\r\
+    \n:global foIspsCaidos {nil};\r\
+    \n:global foIspsCaidosAnt;\r\
+    \n:global foIspsAnt;\r\
+    \n:global foIpDNS;\r\
+    \n:global foIsps;\r\
+    \n:global foRelIspInterfaz;\r\
+    \n\r\
+    \n:local nIsps [:len \$foIsps];\r\
+    \n:local pasos 0;\r\
+    \n:local id;\r\
+    \n:local interfaz;\r\
+    \n:local inactive;\r\
+    \n\r\
+    \n\r\
+    \n\r\
+    \n# Inicializaci\F3n de los ISP antiguos\r\
+    \n:if ([:typeof \$foIspsAnt]=\"nothing\") do={ :set foIspsAnt \$foIsps; }\
+    \r\
+    \n\r\
+    \n# Inicializaci\F3n de los ISP caidos anteriormente\r\
+    \n:if ([:typeof \$foIspsCaidosAnt]=\"nothing\") do={ :set foIspsCaidosAnt \
+    {nil}; }\r\
+    \n\r\
+    \n\r\
+    \n\r\
+    \n# Actualizacion de las capacidades de los ISPs\r\
+    \n:if (\$foIsps != \$foIspsAnt) do={ /system/script/run failoverActualizad\
+    orCapacidadesISPs; }\r\
+    \n\r\
+    \n\r\
+    \n\r\
+    \n# Proceso de pruebas de conexi\F3n a internet por los distintos ISPs\r\
+    \n:foreach rel in=[\$foRelIspInterfaz] do={\r\
+    \n    :set id (\$rel->0);\r\
+    \n    :set interfaz (\$rel->1);\r\
+    \n    :set inactive [/ip/route/get [/ip/route/find comment=\"fo_isp\$id\".\
+    \"mon\"] inactive];\r\
+    \n\r\
+    \n    # Si el monitor est\C3\A1 inactivo, entonces el ISP est\C3\A1 caido \
+    y se agrega a la lista de foIspsCaidos\
+    \n    \
+    \n    :if (\$inactive) do={ :set (\$foIspsCaidos->\"\$id\") \$id; }  \r\
+    \n}\r\
+    \n\r\
+    \n\r\
+    \n# Compara los ISPs caidos actualmente contra los ISPs caidos previamente\
+    \r\
+    \n# Si son iguales evita ejecutar por completo el script\r\
+    \n:if ( \$foIspsCaidos = \$foIspsCaidosAnt) do={ :exit; }\r\
+    \n\r\
+    \n\r\
+    \n# Si hubo cambios entre los ISPs activos actualmente y los anteriores\r\
+    \n# se procede a hacer acutalizaci\F3n en las reglas mangle,\r\
+    \n# liberar y reiniciar los clientes dhcp de las interfaces wan,\r\
+    \n# en la ruta por defecto y se env\EDa notificaci\F3n de los ISPs caidos\
+    \r\
+    \n\r\
+    \n# Liberacion y reinicio de los clientes dhcp de interfaces wan\r\
+    \n/system/script/run failoverDhcpClientRelease;\r\
+    \n\r\
+    \n# Actualizador de reglas Mangle\r\
+    \n/system/script/run failoverActualizadorReglasMangle;\r\
+    \n\r\
+    \n\r\
+    \n######################################################################\r\
+    \n# Si se llega a este punto es por que hubo cambios en los ISPs caidos\r\
+    \n######################################################################\r\
+    \n/system/script/run failoverNotificadorIspsCaidos;\r\
+    \n\r\
+    \n\r\
+    \n# Actualizaci\F3n de los ISPs caidos anteriormente\r\
+    \n:set foIspsCaidosAnt (\$foIspsCaidos);\r\
+    \n\r\
+    \n#:log info \"Fin failover-script\";\r\
+    \n\r\
+    \n"
+add dont-require-permissions=no name=failoverActualizadorCapacidadesISPs \
+    owner=admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    \_Actualizador de capacidades de ISPs\r\
+    \n\r\
+    \n:global foIsps;\r\
+    \n:global foIspsAnt;\r\
+    \n:global foIspsCaidosAnt;\r\
+    \n\r\
+    \n:local idpcc [/ip/firewall/mangle/find comment=\"fo_bandera_pcc\"];\r\
+    \n:local pasos;\r\
+    \n\r\
+    \n# Eliminaci\F3n de las reglas pcc inservibles, a excepci\F3n de la fo_ba\
+    ndera_pcc\r\
+    \n:local idsReglasPcc [/ip/firewall/mangle/find per-connection-classifier~\
+    \"both-addresses\" and comment!=\"fo_bandera_pcc\"];\r\
+    \n\r\
+    \n:foreach id in=[\$idsReglasPcc] do={\r\
+    \n    /ip/firewall/mangle/remove [find .id=\$id];\r\
+    \n}\r\
+    \n\r\
+    \n# Calculo de los pasos totales\r\
+    \n:set pasos 0;\r\
+    \n:foreach isp in=[\$foIsps] do={\r\
+    \n    :set pasos (\$pasos + (\$isp->1));\r\
+    \n}\r\
+    \n\r\
+    \n# Registro de las nuevas reglas pcc en funci\F3n de los ISPs\r\
+    \n:local indiceMaestro 0;\r\
+    \nforeach isp in=[\$foIsps] do={\r\
+    \n    :for i from=1 to=(\$isp->1) step=1 do={\r\
+    \n        :local idIsp (\$isp->0);\r\
+    \n        /ip/firewall/mangle/add action=mark-connection chain=prerouting \
+    connection-mark=no-mark dst-address-type=!local in-interface-list=LAN new-\
+    connection-mark=(\"ISP\".\$idIsp.\"_conn\") per-connection-classifier=(\"b\
+    oth-addresses:\".\$pasos.\"/\".\$indiceMaestro) \r\
+    \n        :set indiceMaestro (\$indiceMaestro+1);\r\
+    \n    }\r\
+    \n}\r\
+    \n\r\
+    \n# Movimiento de las reglas pcc a su nueva posici\F3n para mantener la pr\
+    ioridad\r\
+    \n:set idsReglasPcc [/ip/firewall/mangle/find per-connection-classifier~\"\
+    both-addresses\"];\r\
+    \n:foreach idRegla in=[\$idsReglasPcc] do={\r\
+    \n    if (\$idRegla != \$idpcc ) do={\r\
+    \n        /ip/firewall/mangle/move [find .id=\$idRegla] destination=\$idpc\
+    c\r\
+    \n    }\r\
+    \n}\r\
+    \n\r\
+    \n\r\
+    \n# Actualizaci\F3n de los ISP anteriores\r\
+    \n:set foIspsAnt \$foIsps;\r\
+    \n:log info \"Se actualizaron las capacidades de los ISPs\";\r\
+    \n\r\
+    \n"
+add dont-require-permissions=no name=failoverActualizadorReglasMangle owner=\
+    admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    \_Actualiador de reglas Mangle\r\
+    \n\r\
+    \n:global foIsps;\r\
+    \n:global foIspsCaidos;\r\
+    \n\r\
+    \n:local pasos;\r\
+    \n:local pasosTmp;\r\
+    \n:local estaCaido;\r\
+    \n:local idIsp;\r\
+    \n:local idsReglas;\r\
+    \n:local disabledtmp;\r\
+    \n:local idsTmp;\r\
+    \n\r\
+    \n\r\
+    \n# Calculo de los pasos totales\r\
+    \n:set pasos 0;\r\
+    \n:foreach isp in=[\$foIsps] do={\r\
+    \n  :set estaCaido false;\r\
+    \n\r\
+    \n  :foreach ispCaido in=[\$foIspsCaidos] do={\r\
+    \n    :if (\$isp->0=\$ispCaido) do={\r\
+    \n      :set estaCaido true;\r\
+    \n    }\r\
+    \n  }\r\
+    \n\r\
+    \n  :if (\$estaCaido=false) do={\r\
+    \n    :set pasos (\$pasos + (\$isp->1));\r\
+    \n  }\r\
+    \n}\r\
+    \n#:log info \$pasos;\r\
+    \n\r\
+    \n\r\
+    \n:set pasosTmp 0;\r\
+    \n:foreach isp in=[\$foIsps] do={\r\
+    \n  :set estaCaido false;\r\
+    \n  :set idIsp (\$isp->0);\r\
+    \n\r\
+    \n  :foreach ispCaido in=[\$foIspsCaidos] do={\r\
+    \n    :if ((\$isp->0)=\$ispCaido) do={\r\
+    \n      :set estaCaido true;\r\
+    \n    }\r\
+    \n  }\r\
+    \n\r\
+    \n  # Si el ISP est\E1 ACTIVO se procede a actualizar las reglas con los \
+    \"pasos\" correctos\r\
+    \n  :if (\$estaCaido=false) do={\r\
+    \n    # Obtenci\F3n de los IDs de las reglas del ISP con new-connection-ma\
+    rk\r\
+    \n    :set idsReglas [/ip/firewall/mangle/find new-connection-mark=\"ISP\$\
+    idIsp_conn\" and per-connection-classifier~\"both-addresses\" and comment!\
+    =\"fo_bandera_pcc\"];\r\
+    \n\r\
+    \n    # Por cada ID de la regla se procede a asignar el total de pasos y e\
+    l n\FAmero de paso correspondiente\r\
+    \n    :foreach idRegla in=[\$idsReglas] do={\r\
+    \n      /ip/firewall/mangle/set [find .id=\$idRegla] per-connection-classi\
+    fier=\"both-addresses:\$pasos/\$pasosTmp\"\r\
+    \n\r\
+    \n      #Incremento del contador de pasosTmp\r\
+    \n      :set pasosTmp (\$pasosTmp + 1);\r\
+    \n    }\r\
+    \n\r\
+    \n    # Activaci\F3n de las reglas del ISP activo\r\
+    \n    :set idsTmp [/ip/firewall/mangle/find new-connection-mark=\"ISP\$idI\
+    sp_conn\" and per-connection-classifier~\"both-addresses\" and comment!=\"\
+    fo_bandera_pcc\"];\r\
+    \n    :foreach idtmp in [\$idsTmp] do={\r\
+    \n        :set disabledtmp [/ip/firewall/mangle/get \$idtmp disabled];\r\
+    \n        :if ( \$disabledtmp = true ) do={\r\
+    \n            /ip/firewall/mangle/enable \$idtmp;\r\
+    \n        }\r\
+    \n    }\r\
+    \n  }\r\
+    \n\r\
+    \n  # Si el ISP est\E1 CAIDO se procede a desactivar las reglas\r\
+    \n  :if (\$estaCaido=true) do={\r\
+    \n    :set idsTmp [/ip/firewall/mangle/find new-connection-mark=\"ISP\$idI\
+    sp_conn\" and per-connection-classifier~\"both-addresses\" and comment!=\"\
+    fo_bandera_pcc\"];\r\
+    \n    :foreach idtmp in [\$idsTmp] do={\r\
+    \n        :set disabledtmp [/ip/firewall/mangle/get \$idtmp disabled];\r\
+    \n        :if ( \$disabledtmp = false ) do={\r\
+    \n            /ip/firewall/mangle/disable \$idtmp;\r\
+    \n        }\r\
+    \n    }\r\
+    \n  }\r\
+    \n}\r\
+    \n\r\
+    \n"
+add dont-require-permissions=no name=failoverDhcpClientRelease owner=admin \
+    policy=ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon \
+    source="# Script que se encarga de liberar y reiniciar el cliente DHCP\r\
+    \n# para las interfaces WAN que han vuelto a tener servicio de internet\r\
+    \n:global foIsps;\r\
+    \n:global foIspsCaidos;\r\
+    \n:global foIspsCaidosAnt;\r\
+    \n:global foRelIspInterfaz;\r\
+    \n\r\
+    \n# Se obtienen los ISPs que estan activos actualmente\r\
+    \n:foreach k,isp in=[\$foIsps] do={\r\
+    \n  :local idIsp (\$isp->0);\r\
+    \n  # Si el ISP no est\E1 caido y estuvo caido anteriormente\r\
+    \n  :if ( [:len (\$foIspsCaidos->\$idIsp)] = 0 && [:len (\$foIspsCaidosAnt\
+    ->\$idIsp)] != 0) do={\r\
+    \n    /ip/dhcp-client/release [find interface=((\$foRelIspInterfaz->\$k)->\
+    1)];\r\
+    \n  };\r\
+    \n};\r\
+    \n"
+add dont-require-permissions=no name=failoverNotificadorIspsCaidos owner=\
+    admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    \_Notificador de ISPs caidos\r\
+    \n\r\
+    \n# Variables globales\r\
+    \n:global foIspsCaidos;\r\
+    \n:global foIspsCaidosAnt;\r\
+    \n:global foCorreoAdministrador;\r\
+    \n:global foEnvioEmailsNotificacion;\r\
+    \n\r\
+    \n:local cadIspsCaidos \"\";\r\
+    \n:local tiempo;\r\
+    \n:local fecha;\r\
+    \n:local bndEnvioNotificacion false;\r\
+    \n:local identidad [/system identity get name];\r\
+    \n\r\
+    \n# Impresi\F3n de los ISPs caidos en el Log\r\
+    \n:if ( \$foIspsCaidos = {nil} ) do={\r\
+    \n    :log warning \"Todos los ISPs se encuentran activos\";\r\
+    \n}\r\
+    \n\r\
+    \n:if ( \$foIspsCaidos != {nil} ) do={\r\
+    \n    # Impresi\F3n de los ISPs caidos\r\
+    \n    :foreach idIsp in=[\$foIspsCaidos] do={\r\
+    \n        :if ( [:typeof \$idIsp] = \"num\" ) do={\r\
+    \n            :log warning \"ISP\$idIsp est\E1 caido\";\r\
+    \n            :set cadIspsCaidos (\$cadIspsCaidos.\",\".\$idIsp);\r\
+    \n        }\r\
+    \n    }\r\
+    \n}\r\
+    \n\r\
+    \n\r\
+    \n\r\
+    \n# Si la bandera de env\EDo de emails de notifaci\F3n est\E1 activa, ento\
+    nces\r\
+    \n# se env\EDa el e-mail de notificaci\F3n de ISPs caidos\r\
+    \n:if ( \$foEnvioEmailsNotificacion = \"si\" ) do={\r\
+    \n\r\
+    \n    # Envio de correo de notificacion de ISP Caido\r\
+    \n    :if ( \$foCorreoAdministrador != \"\" ) do={\r\
+    \n        :set tiempo [/system/clock/get time];\r\
+    \n        :set fecha [/system/clock/get date];\r\
+    \n\r\
+    \n        # Env\EDo de correo\r\
+    \n        :if ( \$cadIspsCaidos = \"\" ) do={\r\
+    \n            /tool/e-mail/send to=\$foCorreoAdministrador subject=\"Route\
+    r Balanceador \$identidad\" body=\"El \$fecha a las \$tiempo todos los ISP\
+    \_estan activos\" tls=starttls;\r\
+    \n        }\r\
+    \n\r\
+    \n        :if ( \$cadIspsCaidos != \"\" ) do={\r\
+    \n            /tool/e-mail/send to=\$foCorreoAdministrador subject=\"Route\
+    r Balanceador \$identidad\" body=\"El \$fecha a las \$tiempo los ISP \$cad\
+    IspsCaidos se encuentran caidos\" tls=starttls;\r\
+    \n        }\r\
+    \n\r\
+    \n        :log info \"Se envi\F3 la notificaci\F3n\";\r\
+    \n        :delay 1;\r\
+    \n    }\r\
+    \n\r\
+    \n    :if ( \$foCorreoAdministrador = \"\" ) do={\r\
+    \n        :log info \"No se envi\F3 la notificaci\F3n porque la variable f\
+    oCorreoAdministrador esta en blanco\";\r\
+    \n    }\r\
+    \n}\r\
+    \n\r\
+    \n\r\
+    \n"
+add dont-require-permissions=no name=lanzadorFailover owner=admin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="#\
+    \_Script que se encarga de verificar que el failover\r\
+    \n# no se est\E9 ejecutando previamente para evitar duplicidad de trabajos\
+    \r\
+    \n\r\
+    \n# Obtenci\F3n del ID del failover\r\
+    \n:local idJobEjecucion [/system/script/job/find script=failover];\r\
+    \n\r\
+    \n# Si el script est\E1 en ejecuci\F3n evita lanzar por segunda vez el scr\
+    ipt\r\
+    \n:if (\$idJobEjecucion!=\"\" ) do={ :end; }\r\
+    \n\r\
+    \n# Si no se est\E1 ejecutando previamente se lanza el script\r\
+    \n/system/script/run failover\r\
+    \n"
+/tool e-mail
+set from="MikroTik 244 - StarLink Alvaro Obregon" port=465 server=\
+    smtp.gmail.com tls=starttls user=comunicacioneshcaborca@gmail.com
+/user aaa
+set default-group=full use-radius=yes
